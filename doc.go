@@ -5,6 +5,6 @@
 // high, 5000 insane.
 //
 // Encode turns interleaved little-endian PCM into a version 3990 APE file.
-// Decode reads version 3990 and file versions 3.93 through 3.97. DecodeFile
+// Decode reads version 3990 and file versions 3.93 through 3.99. DecodeFile
 // also follows an APL image link and returns that sample range.
 package ape

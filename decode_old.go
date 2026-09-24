@@ -22,8 +22,12 @@ func parseOld(raw []byte, version int) (apeFile, error) {
 		finalBlocks = int(binary.LittleEndian.Uint32(raw[28:]))
 	)
 
-	if frames <= 0 || channels < 1 || channels > maxChannels {
+	if frames <= 0 || frames > len(raw)/wordSize || rate <= 0 || channels < 1 || channels > maxChannels {
 		return apeFile{}, errEmptyAudio
+	}
+
+	if !level.known() || (version < version3950 && level == CompressionInsane) {
+		return apeFile{}, ErrUnsupported
 	}
 
 	extra := 0
@@ -49,7 +53,7 @@ func parseOld(raw []byte, version int) (apeFile, error) {
 	}
 
 	seekAt := oldHeaderSize + extra + wav
-	if seekCount < frames || seekAt < 0 || seekAt+seekCount*wordSize > len(raw) {
+	if seekCount < frames || seekCount > len(raw)/wordSize || seekAt < 0 || seekAt+seekCount*wordSize > len(raw) {
 		return apeFile{}, errShortSeekTable
 	}
 
@@ -61,10 +65,6 @@ func parseOld(raw []byte, version int) (apeFile, error) {
 	audioEnd := len(raw) - terminating
 	if audioEnd < seekAt || audioEnd > len(raw) {
 		audioEnd = len(raw)
-	}
-
-	if version < version3950 && level == CompressionInsane {
-		return apeFile{}, ErrUnsupported
 	}
 
 	frameBlocks := blocksFast
@@ -79,6 +79,11 @@ func parseOld(raw []byte, version int) (apeFile, error) {
 		bits = 8
 	case flags&flag24Bit != 0:
 		bits = 24
+	}
+
+	err := checkFrames(level, frameBlocks, finalBlocks)
+	if err != nil {
+		return apeFile{}, err
 	}
 
 	samples := (frames-1)*frameBlocks + finalBlocks

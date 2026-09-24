@@ -53,7 +53,7 @@ pcm, stream, err := ape.Decode(file)
 `pcm` is interleaved little-endian samples. A nil options value selects fast
 compression and the usual 73728-sample frame.
 
-`Decode` reads a version 3990 file, or a 3.93–3.97 file, and returns that
+`Decode` reads a version 3990 file, or a 3.93–3.99 file, and returns that
 PCM. `DecodeFile` does the same for a path, and if the path is an APL link
 it opens the image and returns only the linked sample range. Versions
 before 3.93 are not decoded. 3.93 and 3.94 use the older predictor; that

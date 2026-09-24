@@ -75,7 +75,7 @@ func (f *apeFile) frame(idx int) ([]byte, uint32) {
 
 //nolint:cyclop,funlen // container versions share one parser
 func parseFile(raw []byte) (apeFile, error) {
-	if len(raw) < descriptorSize+headerSize || (string(raw[:3]) != "MAC" && string(raw[:4]) != "MACF") {
+	if len(raw) < descriptorSize+headerSize || (string(raw[:4]) != "MAC " && string(raw[:4]) != "MACF") {
 		return apeFile{}, ErrUnsupported
 	}
 
@@ -107,7 +107,12 @@ func parseFile(raw []byte) (apeFile, error) {
 		Float:      raw[3] == 'F' || flags&flagFloat != 0,
 	}
 
-	if frames <= 0 || seekBytesN < frames*wordSize || frameBlocks <= 0 {
+	err := checkFrames(level, frameBlocks, finalBlocks)
+	if err != nil || !stream.supported() {
+		return apeFile{}, ErrUnsupported
+	}
+
+	if frames <= 0 || frames > len(raw)/wordSize || seekBytesN < frames*wordSize {
 		return apeFile{}, errEmptyAudio
 	}
 
@@ -201,6 +206,10 @@ func decodeFrame(frame []byte, skip uint32, blocks int, stream Stream, level Com
 
 	if reader.short {
 		return nil, errShortFrame
+	}
+
+	if crc&^(1<<crcHighBit) != frameCRC(out, 0) {
+		return nil, errFrameCRC
 	}
 
 	return out, nil

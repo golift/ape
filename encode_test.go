@@ -57,6 +57,21 @@ func TestUnsupported(t *testing.T) {
 	if err == nil {
 		t.Fatal("33 channels encoded")
 	}
+
+	err = ape.Encode(dst, pcm, stream, &ape.Options{BlocksPerFrame: 1_000_001})
+	if err == nil {
+		t.Fatal("oversized frame encoded")
+	}
+
+	tagFile, err := os.CreateTemp(t.TempDir(), "tag-*.ape")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ape.Encode(tagFile, pcm, stream, &ape.Options{BlocksPerFrame: 8, Tags: map[string]string{"a\x00b": "c"}})
+	if err == nil {
+		t.Fatal("nul tag encoded")
+	}
 }
 
 func TestNormal(t *testing.T) {
@@ -213,6 +228,16 @@ func TestLink(t *testing.T) {
 
 	if stream.Channels != 2 || !bytes.Equal(got, pcm[10*4:40*4]) {
 		t.Fatalf("link pcm %d bytes stream %+v", len(got), stream)
+	}
+
+	err = os.WriteFile(link, []byte("[Monkey's Audio Image Link File]\r\nImage File=track.apl\r\nStart Block=0\r\nFinish Block=-1\r\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = ape.DecodeFile(link)
+	if err == nil {
+		t.Fatal("link cycle decoded")
 	}
 }
 

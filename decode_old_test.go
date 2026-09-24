@@ -2,17 +2,55 @@ package ape
 
 import (
 	"bytes"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"testing"
 )
 
+func TestParseOldRejects(t *testing.T) {
+	t.Parallel()
+
+	base := make([]byte, 32+8)
+	copy(base, "MAC ")
+	binary.LittleEndian.PutUint16(base[4:], 3970)
+	binary.LittleEndian.PutUint16(base[6:], uint16(CompressionHigh))
+	binary.LittleEndian.PutUint16(base[8:], flagCreateWAV)
+	binary.LittleEndian.PutUint16(base[10:], 2)
+	binary.LittleEndian.PutUint32(base[12:], 44100)
+	binary.LittleEndian.PutUint32(base[24:], 1)
+	binary.LittleEndian.PutUint32(base[28:], 100)
+	binary.LittleEndian.PutUint32(base[32:], 0)
+
+	cases := []struct {
+		name string
+		edit func([]byte)
+	}{
+		{name: "level", edit: func(b []byte) { binary.LittleEndian.PutUint16(b[6:], 1500) }},
+		{name: "rate", edit: func(b []byte) { binary.LittleEndian.PutUint32(b[12:], 0) }},
+		{name: "final", edit: func(b []byte) { binary.LittleEndian.PutUint32(b[28:], 1<<30) }},
+	}
+
+	for _, tc := range cases {
+		raw := append([]byte(nil), base...)
+		tc.edit(raw)
+
+		_, err := parseOld(raw, 3970)
+		if err == nil {
+			t.Fatalf("%s accepted", tc.name)
+		}
+	}
+}
+
 func TestBlackbirdFrame(t *testing.T) {
 	t.Parallel()
 
-	path := "/Volumes/Storage/david/Downloads/b/Blackbird (2007)/Alter Bridge - Blackbird.ape"
+	path := os.Getenv("APE_TEST_FILE")
+	if path == "" {
+		t.Skip("APE_TEST_FILE is unset")
+	}
 
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // optional local fixture from APE_TEST_FILE
 	if err != nil {
 		t.Skip(err)
 	}
@@ -33,7 +71,7 @@ func TestBlackbirdFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-t", "6.68734693877551", "-f", "s16le", "-")
+	cmd := exec.Command("ffmpeg", "-v", "error", "-i", path, "-t", "6.68734693877551", "-f", "s16le", "-") //nolint:gosec // path is the same optional fixture
 
 	want, err := cmd.Output()
 	if err != nil {

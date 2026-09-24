@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 )
 
 const (
@@ -26,7 +27,12 @@ func writeTag(dst io.Writer, tags map[string]string) error {
 	slices.Sort(names)
 
 	var fields []byte
+
 	for _, name := range names {
+		if strings.ContainsRune(name, 0) {
+			return errBadTag
+		}
+
 		fields = append(fields, tagField(name, tags[name])...)
 	}
 

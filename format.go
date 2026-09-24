@@ -31,6 +31,10 @@ const (
 	blocksExtra  = blocksFast * 4
 	blocksInsane = blocksFast * 16
 
+	// Official decoder limits: 1,000,000 blocks per frame, 10,000,000 for insane.
+	maxBlocks       = 1_000_000
+	maxBlocksInsane = 10 * maxBlocks
+
 	bytesPerSample16 = 2
 	wordSize         = 4
 	crcHighBit       = 31
@@ -85,9 +89,9 @@ type Options struct {
 	Tags map[string]string
 }
 
-// ErrUnsupported is returned for a level, bit depth, or channel count that
-// this build does not encode yet.
-var ErrUnsupported = errors.New("ape: unsupported encode")
+// ErrUnsupported is returned for a compression level, bit depth, channel
+// count, sample rate, or frame size this package does not handle.
+var ErrUnsupported = errors.New("ape: unsupported format")
 
 var (
 	errShortDescriptor = errors.New("ape: short descriptor")
@@ -97,6 +101,9 @@ var (
 	errShortSeekTable  = errors.New("ape: short seek table")
 	errLinkStart       = errors.New("ape: link starts past the audio")
 	errLinkEnd         = errors.New("ape: link ends past the audio")
+	errLinkCycle       = errors.New("ape: link cycle")
+	errFrameCRC        = errors.New("ape: frame crc mismatch")
+	errBadTag          = errors.New("ape: tag name contains NUL")
 )
 
 var errPCMLength = errors.New("ape: pcm length is not a whole number of frames")
@@ -151,10 +158,57 @@ func (o *Options) frameBlocks(level Compression) (int, error) {
 	}
 
 	if o != nil && o.BlocksPerFrame > 0 {
+		if o.BlocksPerFrame > level.maxBlocks() {
+			return 0, ErrUnsupported
+		}
+
 		return o.BlocksPerFrame, nil
 	}
 
 	return def, nil
+}
+
+func (c Compression) known() bool {
+	switch c {
+	case CompressionFast, CompressionNormal, CompressionHigh, CompressionExtraHigh, CompressionInsane:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c Compression) maxBlocks() int {
+	if c >= CompressionInsane {
+		return maxBlocksInsane
+	}
+
+	return maxBlocks
+}
+
+func checkFrames(level Compression, frameBlocks, finalBlocks int) error {
+	if !level.known() || frameBlocks <= 0 || frameBlocks > level.maxBlocks() {
+		return ErrUnsupported
+	}
+
+	if finalBlocks <= 0 || finalBlocks > frameBlocks {
+		return ErrUnsupported
+	}
+
+	return nil
+}
+
+func (s Stream) supported() bool {
+	switch s.Bits {
+	case 8, 16, 24, 32:
+	default:
+		return false
+	}
+
+	if s.Float && s.Bits != 32 {
+		return false
+	}
+
+	return s.Channels >= 1 && s.Channels <= maxChannels && s.SampleRate > 0
 }
 
 func (s Stream) sampleBytes() int { return s.Bits / 8 }
