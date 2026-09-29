@@ -57,10 +57,7 @@ func parseOld(raw []byte, version int) (apeFile, error) {
 		return apeFile{}, errShortSeekTable
 	}
 
-	seek := make([]uint32, frames)
-	for idx := range frames {
-		seek[idx] = binary.LittleEndian.Uint32(raw[seekAt+idx*wordSize:])
-	}
+	seek := widenSeek(raw[seekAt:], frames)
 
 	audioEnd := len(raw) - terminating
 	if audioEnd < seekAt || audioEnd > len(raw) {

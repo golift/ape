@@ -1,6 +1,9 @@
 package ape
 
-import "errors"
+import (
+	"errors"
+	"math"
+)
 
 // File and container sizes from the Monkey's Audio 3.99 descriptor.
 const (
@@ -208,7 +211,11 @@ func (s Stream) supported() bool {
 		return false
 	}
 
-	return s.Channels >= 1 && s.Channels <= maxChannels && s.SampleRate > 0
+	if s.Channels < 1 || s.Channels > maxChannels || s.SampleRate <= 0 {
+		return false
+	}
+
+	return uint64(s.SampleRate) <= math.MaxUint32
 }
 
 func (s Stream) sampleBytes() int { return s.Bits / 8 }
@@ -216,17 +223,7 @@ func (s Stream) sampleBytes() int { return s.Bits / 8 }
 func (s Stream) blockAlign() int { return s.Channels * s.sampleBytes() }
 
 func validate(pcm []byte, stream Stream) error {
-	switch stream.Bits {
-	case 8, 16, 24, 32:
-	default:
-		return ErrUnsupported
-	}
-
-	if stream.Float && stream.Bits != 32 {
-		return ErrUnsupported
-	}
-
-	if stream.Channels < 1 || stream.Channels > maxChannels || stream.SampleRate <= 0 {
+	if !stream.supported() {
 		return ErrUnsupported
 	}
 

@@ -58,6 +58,11 @@ func TestUnsupported(t *testing.T) {
 		t.Fatal("33 channels encoded")
 	}
 
+	err = ape.Encode(dst, pcm, ape.Stream{SampleRate: math.MaxUint32 + 1, Channels: 2, Bits: 16}, nil)
+	if err == nil {
+		t.Fatal("sample rate above uint32 encoded")
+	}
+
 	err = ape.Encode(dst, pcm, stream, &ape.Options{BlocksPerFrame: 1_000_001})
 	if err == nil {
 		t.Fatal("oversized frame encoded")
@@ -238,6 +243,20 @@ func TestLink(t *testing.T) {
 	_, _, err = ape.DecodeFile(link)
 	if err == nil {
 		t.Fatal("link cycle decoded")
+	}
+
+	loop := filepath.Join(dir, "loop")
+
+	err = os.Symlink(".", loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	via := filepath.Join(loop, "track.apl")
+
+	_, _, err = ape.DecodeFile(via)
+	if err == nil {
+		t.Fatal("symlink link cycle decoded")
 	}
 }
 

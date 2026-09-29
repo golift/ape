@@ -6,7 +6,8 @@ import (
 	"io"
 )
 
-// Decode reads a version 3990 APE file and returns interleaved little-endian PCM.
+// Decode reads a version 3990 APE file, or a file from versions 3.93 through
+// 3.99, and returns interleaved little-endian PCM.
 func Decode(src io.Reader) ([]byte, Stream, error) {
 	raw, err := io.ReadAll(src)
 	if err != nil {
@@ -45,27 +46,33 @@ type apeFile struct {
 	frames  int
 	samples int
 	audio   []byte
-	seek    []uint32
+	seek    []int64
 	end     int
 }
 
 // frame returns the frame bytes aligned to the first frame's word boundary.
 // skip is the bit index of the frame's first bit inside that window.
 func (f *apeFile) frame(idx int) ([]byte, uint32) {
-	start := int(f.seek[idx])
-	remainder := (start - int(f.seek[0])) & (wordSize - 1)
+	start64 := f.seek[idx]
+	if start64 < 0 || start64 > int64(len(f.audio)) {
+		return nil, 0
+	}
+
+	start := int(start64)
+	remainder := int(start64-f.seek[0]) & (wordSize - 1)
 	aligned := start - remainder
 
-	stop := f.end
+	stop64 := int64(f.end)
 	if idx+1 < len(f.seek) {
-		stop = int(f.seek[idx+1])
+		stop64 = f.seek[idx+1]
 	}
 
-	stop += wordSize
-	if stop > len(f.audio) {
-		stop = len(f.audio)
+	stop64 += wordSize
+	if stop64 > int64(len(f.audio)) {
+		stop64 = int64(len(f.audio))
 	}
 
+	stop := int(stop64)
 	if aligned < 0 || aligned > stop {
 		return nil, 0
 	}
@@ -75,13 +82,17 @@ func (f *apeFile) frame(idx int) ([]byte, uint32) {
 
 //nolint:cyclop,funlen // container versions share one parser
 func parseFile(raw []byte) (apeFile, error) {
-	if len(raw) < descriptorSize+headerSize || (string(raw[:4]) != "MAC " && string(raw[:4]) != "MACF") {
+	if len(raw) < 8 || (string(raw[:4]) != "MAC " && string(raw[:4]) != "MACF") {
 		return apeFile{}, ErrUnsupported
 	}
 
 	version := int(binary.LittleEndian.Uint16(raw[4:]))
 	if version < version3980 {
 		return parseOld(raw, version)
+	}
+
+	if len(raw) < descriptorSize+headerSize {
+		return apeFile{}, errShortDescriptor
 	}
 
 	descBytes := int(binary.LittleEndian.Uint32(raw[8:]))
@@ -118,10 +129,7 @@ func parseFile(raw []byte) (apeFile, error) {
 
 	seekAt := descBytes + headBytes
 
-	seek := make([]uint32, frames)
-	for idx := range frames {
-		seek[idx] = binary.LittleEndian.Uint32(raw[seekAt+idx*wordSize:])
-	}
+	seek := widenSeek(raw[seekAt:], frames)
 
 	audioStart := seekAt + seekBytesN
 
@@ -176,8 +184,11 @@ func decodeFrame(frame []byte, skip uint32, blocks int, stream Stream, level Com
 
 	var lastX int32
 
+	ch := make([]int32, stream.Channels)
+
 	for block := range blocks {
-		ch := make([]int32, stream.Channels)
+		clear(ch)
+
 		switch {
 		case stream.Channels == 1 && special&specialMonoSilence != 0:
 		case stream.Channels == 2 && special&specialLeftSilence != 0 && special&specialRightSilence != 0:
@@ -213,4 +224,27 @@ func decodeFrame(frame []byte, skip uint32, blocks int, stream Stream, level Com
 	}
 
 	return out, nil
+}
+
+// widenSeek rebuilds absolute offsets. Stored seek entries are uint32 and wrap
+// at 4 GiB; a smaller value than the previous entry starts the next 4 GiB.
+func widenSeek(raw []byte, frames int) []int64 {
+	seek := make([]int64, frames)
+
+	var (
+		add  int64
+		prev uint32
+	)
+
+	for idx := range frames {
+		cur := binary.LittleEndian.Uint32(raw[idx*wordSize:])
+		if idx > 0 && cur < prev {
+			add += 1 << 32
+		}
+
+		seek[idx] = add + int64(cur)
+		prev = cur
+	}
+
+	return seek
 }

@@ -220,6 +220,7 @@ const extraBits = (codeBits-2)%8 + 1
 
 type rangeReader struct {
 	words   []uint32
+	limit   int
 	bit     uint32
 	low     uint32
 	rang    uint32
@@ -239,18 +240,24 @@ func newCoderState() coderState {
 }
 
 func newRangeReader(frame []byte, bit uint32) *rangeReader {
+	// The extra words keep a lookahead index in range. have uses limit, so
+	// those zeros are not treated as frame data.
 	words := make([]uint32, len(frame)/wordSize+4)
+	limit := 0
+
 	for i := 0; i+wordSize <= len(frame); i += wordSize {
-		words[i/wordSize] = binary.LittleEndian.Uint32(frame[i:])
+		words[limit] = binary.LittleEndian.Uint32(frame[i:])
+		limit++
 	}
 
 	if rem := len(frame) % wordSize; rem != 0 {
 		var tail [wordSize]byte
 		copy(tail[:], frame[len(frame)-rem:])
-		words[len(frame)/wordSize] = binary.LittleEndian.Uint32(tail[:])
+		words[limit] = binary.LittleEndian.Uint32(tail[:])
+		limit++
 	}
 
-	return &rangeReader{words: words, bit: bit}
+	return &rangeReader{words: words, limit: limit, bit: bit}
 }
 
 func (r *rangeReader) readBits(n uint32) uint32 {
@@ -288,7 +295,7 @@ func (r *rangeReader) readByte() uint32 {
 }
 
 func (r *rangeReader) have(index uint32) bool {
-	if int(index) < len(r.words) {
+	if int(index) < r.limit {
 		return true
 	}
 
@@ -350,28 +357,34 @@ func (r *rangeReader) decodeFastUpdate(shift uint32) uint32 {
 }
 
 func (r *rangeReader) overflow(pivot *uint32) uint32 {
-	total := r.decodeFast(rangeOverflowShift)
-	symbol := uint32(0)
-
-	for symbol < modelElements-1 && total >= rangeTotal[symbol]+rangeWidth[symbol] {
-		symbol++
-	}
-
-	r.low -= r.rang * rangeTotal[symbol]
-	r.rang *= rangeWidth[symbol]
-
-	if symbol == modelElements-1 {
-		symbol = r.decodeFastUpdate(16) << 16
-
-		symbol |= r.decodeFastUpdate(16)
-		if symbol == overflowSignal {
-			*pivot = overflowPivot
-
-			return r.overflow(pivot)
+	for {
+		if r.short {
+			return 0
 		}
-	}
 
-	return symbol
+		total := r.decodeFast(rangeOverflowShift)
+		symbol := uint32(0)
+
+		for symbol < modelElements-1 && total >= rangeTotal[symbol]+rangeWidth[symbol] {
+			symbol++
+		}
+
+		r.low -= r.rang * rangeTotal[symbol]
+		r.rang *= rangeWidth[symbol]
+
+		if symbol != modelElements-1 {
+			return symbol
+		}
+
+		symbol = r.decodeFastUpdate(16) << 16
+		symbol |= r.decodeFastUpdate(16)
+
+		if symbol != overflowSignal || r.short {
+			return symbol
+		}
+
+		*pivot = overflowPivot
+	}
 }
 
 func (r *rangeReader) decodeValue(st *coderState) int64 {

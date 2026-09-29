@@ -9,12 +9,18 @@ import (
 )
 
 // Encode writes an APE file of interleaved little-endian PCM.
-// dst must be seekable because the descriptor, header, and seek table are
-// patched after the frames are written.
+// dst must be seekable. Writing starts at offset zero, and the descriptor,
+// header, and seek table are patched after the frames are written.
+// A destination longer than the new file is not truncated.
 func Encode(dst io.WriteSeeker, pcm []byte, stream Stream, opt *Options) error {
 	err := validate(pcm, stream)
 	if err != nil {
 		return err
+	}
+
+	_, err = dst.Seek(0, io.SeekStart)
+	if err != nil {
+		return fmt.Errorf("ape: seeking start: %w", err)
 	}
 
 	level := opt.compression()

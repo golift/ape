@@ -42,6 +42,19 @@ func TestParseOldRejects(t *testing.T) {
 	}
 }
 
+func TestWidenSeek(t *testing.T) {
+	t.Parallel()
+
+	raw := make([]byte, 8)
+	binary.LittleEndian.PutUint32(raw[0:], 0xFFFFFFF0)
+	binary.LittleEndian.PutUint32(raw[4:], 0x10)
+
+	seek := widenSeek(raw, 2)
+	if seek[0] != 0xFFFFFFF0 || seek[1] != 0x100000010 {
+		t.Fatalf("seek %+v", seek)
+	}
+}
+
 func TestBlackbirdFrame(t *testing.T) {
 	t.Parallel()
 

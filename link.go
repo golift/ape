@@ -23,6 +23,11 @@ func decodeFile(path string, seen map[string]struct{}) ([]byte, Stream, error) {
 		return nil, Stream{}, fmt.Errorf("ape: reading file: %w", err)
 	}
 
+	resolved, linkErr := filepath.EvalSymlinks(abs)
+	if linkErr == nil {
+		abs = resolved
+	}
+
 	abs = filepath.Clean(abs)
 	if _, ok := seen[abs]; ok {
 		return nil, Stream{}, errLinkCycle
