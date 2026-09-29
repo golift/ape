@@ -17,6 +17,19 @@ type decoder struct {
 	coeffB  [8]int64
 	nn      []*nnFilter
 	legacy  bool
+	interim bool
+}
+
+func (d *decoder) useInterim(on bool) {
+	if !on {
+		return
+	}
+
+	d.interim = true
+
+	for _, filter := range d.nn {
+		filter.interim = true
+	}
 }
 
 func newDecoder(bits int, level Compression, version int) *decoder {
@@ -121,14 +134,7 @@ func (d *decoder) decompress(sampleA, sampleB int64) int32 {
 	d.predB.set(-1, d.wrap(d.predB.get(0)-d.predB.get(-1)))
 
 	predA, predB := d.predictions()
-
-	var current int64
-	if d.bits >= 32 {
-		current = sampleA + ((predA + (predB >> 1)) >> predShift)
-	} else {
-		combined := (int32(predA) + (int32(predB) >> 1)) >> predShift
-		current = d.wrap(sampleA + int64(combined))
-	}
+	current := d.combine(sampleA, predA, predB)
 
 	d.adaptA.set(0, adaptSign(d.predA.get(0)))
 	d.adaptA.set(-1, adaptSign(d.predA.get(-1)))
@@ -214,6 +220,22 @@ func stageDecompress(last *int32, input int64) int32 {
 	*last = int32(input + ((int64(*last) * stageMultiply) >> stageShift))
 
 	return *last
+}
+
+func (d *decoder) combine(sampleA, predA, predB int64) int64 {
+	if d.bits >= 32 {
+		return sampleA + ((predA + (predB >> 1)) >> predShift)
+	}
+
+	if d.interim {
+		shifted := (predA + (predB >> 1)) >> predShift
+
+		return d.wrap(sampleA + int64(int32(shifted)))
+	}
+
+	combined := (int32(predA) + (int32(predB) >> 1)) >> predShift
+
+	return d.wrap(sampleA + int64(combined))
 }
 
 func (d *decoder) wrap(v int64) int64 {

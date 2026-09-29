@@ -120,7 +120,7 @@ func preparePairs(pcm []byte, ch [][]int32, bits, width int) {
 
 		start := 8
 		if channels == 7 {
-			start = 7
+			start = 6
 		}
 
 		for c := start; c < channels; c++ {
@@ -209,7 +209,7 @@ func writePairs(dst []byte, ch []int32, bits, width int) {
 
 	start := 8
 	if len(ch) == 7 {
-		start = 7
+		start = 6
 	}
 
 	for idx := start; idx < len(ch); idx++ {

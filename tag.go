@@ -9,9 +9,8 @@ import (
 )
 
 const (
-	tagVersion        = 2000
-	tagFooterBytes    = 32
-	tagContainsFooter = 1 << 30
+	tagVersion     = 2000
+	tagFooterBytes = 32
 )
 
 func writeTag(dst io.Writer, tags map[string]string) error {
@@ -41,7 +40,6 @@ func writeTag(dst io.Writer, tags map[string]string) error {
 	binary.LittleEndian.PutUint32(footer[8:], tagVersion)
 	binary.LittleEndian.PutUint32(footer[12:], uint32(len(fields)+tagFooterBytes))
 	binary.LittleEndian.PutUint32(footer[16:], uint32(len(names)))
-	binary.LittleEndian.PutUint32(footer[20:], tagContainsFooter)
 
 	_, err := dst.Write(append(fields, footer...))
 	if err != nil {

@@ -79,7 +79,7 @@ func TestBlackbirdFrame(t *testing.T) {
 
 	frame, skip := file.frame(0)
 
-	got, err := decodeFrame(frame, skip, file.blocks(0), file.stream, file.level, file.version)
+	got, err := decodeFrame(frame, skip, file.blocks(0), file.stream, file.level, file.version, false)
 	if err != nil {
 		t.Fatal(err)
 	}

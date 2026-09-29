@@ -274,6 +274,11 @@ func TestChannels(t *testing.T) {
 	}
 
 	encodeOnly(t, multiPCM24(4, 12), ape.Stream{SampleRate: 48000, Channels: 4, Bits: 24}, shortFrame())
+
+	// Channel 6 is a plain leftover sample. ffmpeg cannot decode this, so
+	// the check is our own round trip, including a nonzero last channel.
+	selfRoundTrip(t, multiPCM(7, 24), ape.Stream{SampleRate: 44100, Channels: 7, Bits: 16}, shortFrame())
+	selfRoundTrip(t, multiPCM24(7, 12), ape.Stream{SampleRate: 48000, Channels: 7, Bits: 24}, shortFrame())
 }
 
 func TestBitDepths(t *testing.T) {
@@ -356,11 +361,44 @@ func TestHeaderAndTag(t *testing.T) {
 		t.Fatal("header, footer, or tag missing")
 	}
 
+	tag := raw[len(raw)-32:]
+	if binary.LittleEndian.Uint32(tag[20:]) != 0 {
+		t.Fatalf("footer flags %#x", binary.LittleEndian.Uint32(tag[20:]))
+	}
+
 	roundTrip(t, pcm, ape.Stream{SampleRate: 44100, Channels: 2, Bits: 16}, opt)
 }
 
 func shortFrame() *ape.Options {
 	return &ape.Options{Compression: ape.CompressionFast, BlocksPerFrame: 16}
+}
+
+func selfRoundTrip(t *testing.T, pcm []byte, stream ape.Stream, opt *ape.Options) {
+	t.Helper()
+
+	file, err := os.Create(filepath.Join(t.TempDir(), "out.ape"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ape.Encode(file, pcm, stream, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, decoded, err := ape.Decode(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if decoded.Channels != stream.Channels || !bytes.Equal(got, pcm) {
+		t.Fatalf("self round trip channels %d bytes %d", decoded.Channels, len(got))
+	}
 }
 
 func roundTrip(t *testing.T, pcm []byte, stream ape.Stream, opt *ape.Options) {

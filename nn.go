@@ -19,6 +19,7 @@ type nnFilter struct {
 	round    int64
 	wide     bool
 	oldDelta bool
+	interim  bool
 	coeff    []int64
 	input    roll
 	delta    roll
@@ -86,9 +87,14 @@ func (n *nnFilter) decompress(input int64) int64 {
 	dot := n.dot()
 
 	var output int64
-	if n.wide {
+
+	switch {
+	case n.wide:
 		output = input + ((dot + n.round) >> n.shift)
-	} else {
+	case n.interim:
+		shifted := int32((dot + n.round) >> n.shift)
+		output = int64(int32(input) + shifted)
+	default:
 		shifted := (int32(dot) + int32(n.round)) >> n.shift
 		output = int64(int32(input) + shifted)
 	}

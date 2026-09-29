@@ -23,7 +23,7 @@ func Decode(src io.Reader) ([]byte, Stream, error) {
 	for idx := range file.frames {
 		frame, skip := file.frame(idx)
 
-		chunk, err := decodeFrame(frame, skip, file.blocks(idx), file.stream, file.level, file.version)
+		chunk, err := decodeFrame(frame, skip, file.blocks(idx), file.stream, file.level, file.version, false)
 		if err != nil {
 			return nil, Stream{}, err
 		}
@@ -157,7 +157,9 @@ func parseFile(raw []byte) (apeFile, error) {
 }
 
 //nolint:cyclop,funlen // silence, pseudo-stereo, stereo, and multi-channel are separate paths
-func decodeFrame(frame []byte, skip uint32, blocks int, stream Stream, level Compression, version int) ([]byte, error) {
+func decodeFrame(
+	frame []byte, skip uint32, blocks int, stream Stream, level Compression, version int, interim bool,
+) ([]byte, error) {
 	if len(frame) < 8 || blocks < 0 {
 		return nil, errShortFrame
 	}
@@ -179,6 +181,7 @@ func decodeFrame(frame []byte, skip uint32, blocks int, stream Stream, level Com
 
 	for idx := range preds {
 		preds[idx] = newDecoder(stream.Bits, level, version)
+		preds[idx].useInterim(interim)
 		sums[idx] = newCoderState()
 	}
 
@@ -220,6 +223,13 @@ func decodeFrame(frame []byte, skip uint32, blocks int, stream Stream, level Com
 	}
 
 	if crc&^(1<<crcHighBit) != frameCRC(out, 0) {
+		// 24-bit files written between MAC 5.01 and 8.51 keep the prediction
+		// sum at 64 bits. The current path narrows each side first, so a
+		// checksum miss is retried once in that interim mode.
+		if stream.Bits == 24 && !interim {
+			return decodeFrame(frame, skip, blocks, stream, level, version, true)
+		}
+
 		return nil, errFrameCRC
 	}
 
