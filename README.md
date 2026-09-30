@@ -39,6 +39,13 @@ err := ape.Encode(file, pcm, ape.Stream{
 }, nil)
 ```
 
+`NewEncoder` writes the same file from PCM chunks. The sample count has to
+be known first, because the seek table is written in front of the audio.
+
+```go
+enc, err := ape.NewEncoder(file, stream, samples, nil)
+```
+
 ### Decode
 
 - [x] Version 3990
@@ -48,6 +55,14 @@ err := ape.Encode(file, pcm, ape.Stream{
 
 ```go
 pcm, stream, err := ape.Decode(file)
+```
+
+`NewDecoder` reads the header and returns one PCM frame at a time. The
+caller owns the reader.
+
+```go
+dec, err := ape.NewDecoder(file)
+frame, err := dec.Next()
 ```
 
 `pcm` is interleaved little-endian samples. A nil options value selects fast

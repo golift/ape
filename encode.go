@@ -1,7 +1,6 @@
 package ape
 
 import (
-	"crypto/md5" //nolint:gosec // MD5 is the APE file checksum, not a security hash.
 	"encoding/binary"
 	"fmt"
 	"hash"
@@ -18,53 +17,17 @@ func Encode(dst io.WriteSeeker, pcm []byte, stream Stream, opt *Options) error {
 		return err
 	}
 
-	_, err = dst.Seek(0, io.SeekStart)
-	if err != nil {
-		return fmt.Errorf("ape: seeking start: %w", err)
-	}
-
-	level := opt.compression()
-
-	frameBlocks, err := opt.frameBlocks(level)
+	enc, err := NewEncoder(dst, stream, len(pcm)/stream.blockAlign(), opt)
 	if err != nil {
 		return err
 	}
 
-	if stream.Float {
-		pcm = transformFloat(append([]byte(nil), pcm...))
-	}
-
-	samples := len(pcm) / stream.blockAlign()
-	frames := (samples + frameBlocks - 1) / frameBlocks
-	prefix := descriptorSize + headerSize + frames*wordSize
-
-	err = writeZeros(dst, prefix)
+	err = enc.Write(pcm)
 	if err != nil {
 		return err
 	}
 
-	sum := md5.New() //nolint:gosec // MD5 is the APE file checksum, not a security hash.
-
-	err = writeExtra(dst, sum, opt.header())
-	if err != nil {
-		return err
-	}
-
-	seek := make([]uint32, frames)
-
-	finalWord, err := writeFrames(dst, sum, seek, pcm, stream, frameBlocks, level)
-	if err != nil {
-		return err
-	}
-
-	_, err = dst.Write(finalWord[:])
-	if err != nil {
-		return fmt.Errorf("ape: writing final word: %w", err)
-	}
-
-	sum.Write(finalWord[:])
-
-	return closeFile(dst, sum, seek, stream, level, opt, frameBlocks, samples, frames, prefix)
+	return enc.Close()
 }
 
 func closeFile(
@@ -140,58 +103,6 @@ func writeExtra(dst io.Writer, sum hash.Hash, data []byte) error {
 	}
 
 	return nil
-}
-
-func writeFrames(
-	dst io.WriteSeeker,
-	sum hash.Hash,
-	seek []uint32,
-	pcm []byte,
-	stream Stream,
-	frameBlocks int,
-	level Compression,
-) ([4]byte, error) {
-	var (
-		carry     uint32
-		carryLen  int
-		blockSize = stream.blockAlign()
-	)
-
-	for frame := range seek {
-		start := frame * frameBlocks
-		end := min(start+frameBlocks, len(pcm)/blockSize)
-		chunk := pcm[start*blockSize : end*blockSize]
-		payload := encodeFrame(chunk, stream.Channels, stream.Bits, level)
-
-		pos, err := dst.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return [4]byte{}, fmt.Errorf("ape: telling frame offset: %w", err)
-		}
-
-		seek[frame] = uint32(pos) + uint32(carryLen)
-
-		body, word, ncarry := stitchFrame(payload, carry, carryLen)
-		carry = word
-		carryLen = ncarry
-
-		aligned := len(body) / wordSize * wordSize
-
-		_, err = dst.Write(body[:aligned])
-		if err != nil {
-			return [4]byte{}, fmt.Errorf("ape: writing frame: %w", err)
-		}
-
-		sum.Write(body[:aligned])
-	}
-
-	var final [4]byte
-	if carryLen == 0 {
-		return final, nil
-	}
-
-	binary.LittleEndian.PutUint32(final[:], carry)
-
-	return final, nil
 }
 
 // stitchFrame joins the unwritten tail of the previous frame onto this one.

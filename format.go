@@ -8,6 +8,8 @@ import (
 // File and container sizes from the Monkey's Audio 3.99 descriptor.
 const (
 	fileVersion    = 3990
+	magicMAC       = "MAC "
+	magicMACF      = "MACF"
 	version3980    = 3980
 	version3950    = 3950
 	version3930    = 3930
@@ -218,9 +220,46 @@ func (s Stream) supported() bool {
 	return uint64(s.SampleRate) <= math.MaxUint32
 }
 
+// maxPCMBytes is below the runtime slice limit, which is about 256 TiB on
+// 64-bit hosts and 2 GiB on 32-bit hosts. A header can claim far more.
+// The value stays a uint64 so the comparison compiles on 32-bit targets.
+const maxPCMBytes = uint64(1) << 40
+
 func (s Stream) sampleBytes() int { return s.Bits / 8 }
 
 func (s Stream) blockAlign() int { return s.Channels * s.sampleBytes() }
+
+// sampleCount is the total PCM frames declared by a header.
+// pcmBytes is that many frames in bytes. Either rejects a count that
+// cannot be allocated.
+func sampleCount(frames, frameBlocks, finalBlocks int) (int, error) {
+	if frames <= 0 || frameBlocks <= 0 || finalBlocks <= 0 {
+		return 0, errEmptyAudio
+	}
+
+	if frames > 1 && frames-1 > math.MaxInt/frameBlocks {
+		return 0, ErrUnsupported
+	}
+
+	samples := (frames-1)*frameBlocks + finalBlocks
+	if samples < finalBlocks {
+		return 0, ErrUnsupported
+	}
+
+	return samples, nil
+}
+
+func pcmBytes(samples, align int) (int, error) {
+	if samples < 0 || align <= 0 {
+		return 0, ErrUnsupported
+	}
+
+	if uint64(samples) > maxPCMBytes/uint64(align) || samples > math.MaxInt/align {
+		return 0, ErrUnsupported
+	}
+
+	return samples * align, nil
+}
 
 func validate(pcm []byte, stream Stream) error {
 	if !stream.supported() {

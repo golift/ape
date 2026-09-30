@@ -83,14 +83,20 @@ func parseOld(raw []byte, version int) (apeFile, error) {
 		return apeFile{}, err
 	}
 
-	samples := (frames-1)*frameBlocks + finalBlocks
+	samples, err := sampleCount(frames, frameBlocks, finalBlocks)
+	if err != nil {
+		return apeFile{}, err
+	}
+
+	stream := Stream{Bits: bits, Channels: channels, SampleRate: rate}
+
+	_, err = pcmBytes(samples, stream.blockAlign())
+	if err != nil {
+		return apeFile{}, err
+	}
 
 	return apeFile{
-		stream: Stream{
-			Bits:       bits,
-			Channels:   channels,
-			SampleRate: rate,
-		},
+		stream:  stream,
 		level:   level,
 		version: version,
 		frames:  frames,

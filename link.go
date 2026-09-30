@@ -2,7 +2,9 @@ package ape
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,26 +20,27 @@ func DecodeFile(path string) ([]byte, Stream, error) {
 }
 
 func decodeFile(path string, seen map[string]struct{}) ([]byte, Stream, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := canonicalPath(path)
 	if err != nil {
-		return nil, Stream{}, fmt.Errorf("ape: reading file: %w", err)
+		return nil, Stream{}, err
 	}
 
-	resolved, linkErr := filepath.EvalSymlinks(abs)
-	if linkErr == nil {
-		abs = resolved
-	}
-
-	abs = filepath.Clean(abs)
 	if _, ok := seen[abs]; ok {
 		return nil, Stream{}, errLinkCycle
 	}
 
 	seen[abs] = struct{}{}
 
-	raw, err := os.ReadFile(path) //nolint:gosec // the path is the file the caller asked to open
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, Stream{}, fmt.Errorf("ape: reading file: %w", err)
+	}
+
+	defer func() { _ = file.Close() }()
+
+	pcm, stream, raw, audio, err := readAudioOrRest(file)
+	if err != nil || audio {
+		return pcm, stream, err
 	}
 
 	image, start, finish, ok := parseLink(raw)
@@ -49,7 +52,7 @@ func decodeFile(path string, seen map[string]struct{}) ([]byte, Stream, error) {
 		image = filepath.Join(filepath.Dir(path), image)
 	}
 
-	pcm, stream, err := decodeFile(image, seen)
+	pcm, stream, err = decodeFile(image, seen)
 	if err != nil {
 		return nil, Stream{}, err
 	}
@@ -60,6 +63,20 @@ func decodeFile(path string, seen map[string]struct{}) ([]byte, Stream, error) {
 	}
 
 	return pcm, stream, nil
+}
+
+func canonicalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("ape: reading file: %w", err)
+	}
+
+	resolved, linkErr := filepath.EvalSymlinks(abs)
+	if linkErr == nil {
+		abs = resolved
+	}
+
+	return filepath.Clean(abs), nil
 }
 
 func sliceLink(pcm []byte, align, start, finish int) ([]byte, error) {
@@ -113,6 +130,44 @@ func parseLink(raw []byte) (image string, start, finish int, ok bool) {
 	}
 
 	return image, start, finish, true
+}
+
+// readAudioOrRest decodes a MAC file in place. Anything else is returned so
+// the caller can parse an APL link without keeping a second copy of an album.
+func readAudioOrRest(file *os.File) ([]byte, Stream, []byte, bool, error) {
+	var magic [4]byte
+
+	n, err := io.ReadFull(file, magic[:])
+	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, Stream{}, magic[:n], false, nil
+		}
+
+		return nil, Stream{}, nil, false, fmt.Errorf("ape: reading file: %w", err)
+	}
+
+	if string(magic[:]) == magicMAC || string(magic[:]) == magicMACF {
+		_, err = file.Seek(0, io.SeekStart)
+		if err != nil {
+			return nil, Stream{}, nil, true, fmt.Errorf("ape: seeking start: %w", err)
+		}
+
+		dec, err := NewDecoder(file)
+		if err != nil {
+			return nil, Stream{}, nil, true, err
+		}
+
+		pcm, err := dec.readAll()
+
+		return pcm, dec.stream, nil, true, err
+	}
+
+	rest, err := io.ReadAll(file)
+	if err != nil {
+		return nil, Stream{}, nil, false, fmt.Errorf("ape: reading file: %w", err)
+	}
+
+	return nil, Stream{}, append(magic[:], rest...), false, nil
 }
 
 func linkValue(text, key string) string {
