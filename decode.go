@@ -8,7 +8,15 @@ import (
 
 // Decode reads a version 3990 APE file, or a file from versions 3.93 through
 // 3.99, and returns interleaved little-endian PCM.
+// A seekable reader (io.ReadSeeker) positioned at the start is decoded a frame at a time.
 func Decode(src io.Reader) ([]byte, Stream, error) {
+	if rs, ok := src.(io.ReadSeeker); ok {
+		pos, posErr := rs.Seek(0, io.SeekCurrent)
+		if posErr == nil && pos == 0 {
+			return decodeSeeker(rs)
+		}
+	}
+
 	raw, err := io.ReadAll(src)
 	if err != nil {
 		return nil, Stream{}, fmt.Errorf("ape: reading file: %w", err)
@@ -82,7 +90,7 @@ func (f *apeFile) frame(idx int) ([]byte, uint32) {
 
 //nolint:cyclop,funlen // container versions share one parser
 func parseFile(raw []byte) (apeFile, error) {
-	if len(raw) < 8 || (string(raw[:4]) != "MAC " && string(raw[:4]) != "MACF") {
+	if len(raw) < 8 || (string(raw[:4]) != magicMAC && string(raw[:4]) != magicMACF) {
 		return apeFile{}, ErrUnsupported
 	}
 

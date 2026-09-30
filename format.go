@@ -8,6 +8,8 @@ import (
 // File and container sizes from the Monkey's Audio 3.99 descriptor.
 const (
 	fileVersion    = 3990
+	magicMAC       = "MAC "
+	magicMACF      = "MACF"
 	version3980    = 3980
 	version3950    = 3950
 	version3930    = 3930
