@@ -69,6 +69,31 @@ func TestParseFileRejectsUnallocatablePCM(t *testing.T) {
 	}
 }
 
+func TestNewDecoderSkipsLargeLegacyWAVHeader(t *testing.T) {
+	t.Parallel()
+
+	const wav = maxHeaderBytes + 64
+
+	raw := make([]byte, oldHeaderSize+wav+wordSize)
+	copy(raw, "MAC ")
+	binary.LittleEndian.PutUint16(raw[4:], version3950)
+	binary.LittleEndian.PutUint16(raw[6:], uint16(CompressionNormal))
+	binary.LittleEndian.PutUint16(raw[10:], 1)
+	binary.LittleEndian.PutUint32(raw[12:], 8000)
+	binary.LittleEndian.PutUint32(raw[16:], wav)
+	binary.LittleEndian.PutUint32(raw[24:], 1)
+	binary.LittleEndian.PutUint32(raw[28:], 100)
+
+	dec, err := NewDecoder(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if dec.Samples() != 100 || dec.frames != 1 {
+		t.Fatalf("samples %d frames %d", dec.Samples(), dec.frames)
+	}
+}
+
 func TestWidenSeek(t *testing.T) {
 	t.Parallel()
 

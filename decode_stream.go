@@ -7,8 +7,9 @@ import (
 	"io"
 )
 
-// maxHeaderBytes is a ceiling for a descriptor, header, or legacy WAV header.
+// maxHeaderBytes is a ceiling for a descriptor or header.
 // Real files use a 52-byte descriptor and a 24-byte header.
+// A preserved legacy WAV header is skipped, not buffered, so it has no ceiling.
 const maxHeaderBytes = 1 << 20
 
 // Decoder yields interleaved PCM one frame at a time.
@@ -315,7 +316,7 @@ func parseOldDecoder(src io.ReadSeeker, version int, size int64) (*Decoder, erro
 		wav = storedHeader
 	}
 
-	if wav < 0 || int64(wav) > size || wav > maxHeaderBytes {
+	if wav < 0 || int64(wav) > size {
 		return nil, errShortDescriptor
 	}
 
@@ -326,7 +327,14 @@ func parseOldDecoder(src io.ReadSeeker, version int, size int64) (*Decoder, erro
 		return nil, errShortSeekTable
 	}
 
-	tail, err := readN(src, wav+frames*wordSize)
+	if wav > 0 {
+		_, err = src.Seek(int64(wav), io.SeekCurrent)
+		if err != nil {
+			return nil, fmt.Errorf("ape: seeking wav header: %w", err)
+		}
+	}
+
+	seekRaw, err := readN(src, frames*wordSize)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +388,7 @@ func parseOldDecoder(src io.ReadSeeker, version int, size int64) (*Decoder, erro
 		samples:     samples,
 		frameBlocks: frameBlocks,
 		finalBlocks: finalBlocks,
-		seek:        widenSeek(tail[wav:], frames),
+		seek:        widenSeek(seekRaw, frames),
 		end:         audioEnd,
 		size:        size,
 	}, nil

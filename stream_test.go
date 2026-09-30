@@ -34,7 +34,7 @@ func TestStreamDecodeMatchesDecode(t *testing.T) {
 	opt := &ape.Options{Compression: ape.CompressionFast, BlocksPerFrame: 30}
 	raw := encodeToBytes(t, pcm, stream, opt)
 
-	got, _, err := ape.Decode(bytes.NewReader(raw))
+	got, _, err := ape.Decode(bytes.NewBuffer(raw))
 	if err != nil {
 		t.Fatal(err)
 	}

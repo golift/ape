@@ -62,6 +62,8 @@ func NewEncoder(dst io.WriteSeeker, stream Stream, samples int, opt *Options) (*
 		return nil, err
 	}
 
+	hold := min(samples, frameBlocks)
+
 	return &Encoder{
 		dst:         dst,
 		stream:      stream,
@@ -71,7 +73,7 @@ func NewEncoder(dst io.WriteSeeker, stream Stream, samples int, opt *Options) (*
 		frameBlocks: frameBlocks,
 		samples:     samples,
 		frames:      frames,
-		buf:         make([]byte, 0, frameBlocks*stream.blockAlign()),
+		buf:         make([]byte, 0, hold*stream.blockAlign()),
 		seek:        make([]uint32, frames),
 		sum:         sum,
 		prefix:      prefix,

@@ -222,7 +222,8 @@ func (s Stream) supported() bool {
 
 // maxPCMBytes is below the runtime slice limit, which is about 256 TiB on
 // 64-bit hosts and 2 GiB on 32-bit hosts. A header can claim far more.
-const maxPCMBytes = 1 << 40
+// The value stays a uint64 so the comparison compiles on 32-bit targets.
+const maxPCMBytes = uint64(1) << 40
 
 func (s Stream) sampleBytes() int { return s.Bits / 8 }
 
@@ -249,7 +250,11 @@ func sampleCount(frames, frameBlocks, finalBlocks int) (int, error) {
 }
 
 func pcmBytes(samples, align int) (int, error) {
-	if samples < 0 || align <= 0 || (samples > 0 && samples > maxPCMBytes/align) {
+	if samples < 0 || align <= 0 {
+		return 0, ErrUnsupported
+	}
+
+	if uint64(samples) > maxPCMBytes/uint64(align) || samples > math.MaxInt/align {
 		return 0, ErrUnsupported
 	}
 
