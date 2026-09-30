@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 )
 
 var errEncoderClosed = errors.New("ape: encoder closed")
@@ -38,25 +39,7 @@ type Encoder struct {
 // samples must be the number of PCM frames Write will accept.
 // A destination longer than the new file is not truncated.
 func NewEncoder(dst io.WriteSeeker, stream Stream, samples int, opt *Options) (*Encoder, error) {
-	if !stream.supported() || samples <= 0 {
-		return nil, errPCMLength
-	}
-
-	level := opt.compression()
-
-	frameBlocks, err := opt.frameBlocks(level)
-	if err != nil {
-		return nil, err
-	}
-
-	frames := (samples + frameBlocks - 1) / frameBlocks
-	finalBlocks := samples % frameBlocks
-
-	if finalBlocks == 0 {
-		finalBlocks = frameBlocks
-	}
-
-	err = checkFrames(level, frameBlocks, finalBlocks)
+	level, frameBlocks, frames, err := encodePlan(stream, samples, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -111,9 +94,32 @@ func (e *Encoder) Write(pcm []byte) error {
 	}
 
 	e.accepted += len(pcm)
+
+	frameBytes := e.frameBlocks * e.align
+	if len(e.buf) > 0 {
+		need := min(frameBytes-len(e.buf), len(pcm))
+
+		e.buf = append(e.buf, pcm[:need]...)
+		pcm = pcm[need:]
+
+		err := e.flushFull()
+		if err != nil {
+			return err
+		}
+	}
+
+	for e.frame < e.frames-1 && len(pcm) >= frameBytes {
+		err := e.emit(pcm[:frameBytes])
+		if err != nil {
+			return err
+		}
+
+		pcm = pcm[frameBytes:]
+	}
+
 	e.buf = append(e.buf, pcm...)
 
-	return e.flushFull()
+	return nil
 }
 
 // Close writes the last frame, the container header, and the APEv2 tag.
@@ -143,20 +149,24 @@ func (e *Encoder) Close() error {
 
 	var final [wordSize]byte
 
+	// APE range decoders read one word past the last frame. A zero word is
+	// still required when the payload already ends on a word boundary.
 	if e.carryLen != 0 {
 		binary.LittleEndian.PutUint32(final[:], e.carry)
-
-		_, err := e.dst.Write(final[:])
-		if err != nil {
-			return fmt.Errorf("ape: writing final word: %w", err)
-		}
-
-		e.sum.Write(final[:])
 	}
+
+	_, err := e.dst.Write(final[:])
+	if err != nil {
+		return fmt.Errorf("ape: writing final word: %w", err)
+	}
+
+	e.sum.Write(final[:])
 
 	return closeFile(e.dst, e.sum, e.seek, e.stream, e.level, e.opt, e.frameBlocks, e.samples, e.frames, e.prefix)
 }
 
+// flushFull encodes every full frame except the last. That frame stays
+// buffered until Close, which is the only place that knows the write is finished.
 func (e *Encoder) flushFull() error {
 	frameBytes := e.frameBlocks * e.align
 
@@ -172,6 +182,9 @@ func (e *Encoder) flushFull() error {
 	return nil
 }
 
+// emit compresses one frame and stitches the previous frame's leftover
+// word onto it. Float samples are transformed on a copy. The unaligned
+// tail is kept for the next frame; Close writes the terminating word.
 func (e *Encoder) emit(pcm []byte) error {
 	chunk := pcm
 	if e.stream.Float {
@@ -201,4 +214,62 @@ func (e *Encoder) emit(pcm []byte) error {
 	e.frame++
 
 	return nil
+}
+
+func encodePlan(stream Stream, samples int, opt *Options) (Compression, int, int, error) {
+	if !stream.supported() {
+		return 0, 0, 0, ErrUnsupported
+	}
+
+	if samples <= 0 {
+		return 0, 0, 0, errPCMLength
+	}
+
+	if samples > math.MaxInt/stream.blockAlign() {
+		return 0, 0, 0, ErrUnsupported
+	}
+
+	level := opt.compression()
+
+	frameBlocks, err := opt.frameBlocks(level)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	frames, err := frameCount(samples, frameBlocks)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	finalBlocks := samples % frameBlocks
+	if finalBlocks == 0 {
+		finalBlocks = frameBlocks
+	}
+
+	err = checkFrames(level, frameBlocks, finalBlocks)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	return level, frameBlocks, frames, nil
+}
+
+// frameCount is the number of APE frames for samples, rounded up.
+// The count has to fit the uint32 seek-table size in the descriptor.
+func frameCount(samples, frameBlocks int) (int, error) {
+	if frameBlocks <= 0 {
+		return 0, ErrUnsupported
+	}
+
+	frames := samples / frameBlocks
+	if samples%frameBlocks != 0 {
+		frames++
+	}
+
+	prefix := descriptorSize + headerSize
+	if frames <= 0 || frames > math.MaxUint32/wordSize || frames > (math.MaxInt-prefix)/wordSize {
+		return 0, ErrUnsupported
+	}
+
+	return frames, nil
 }

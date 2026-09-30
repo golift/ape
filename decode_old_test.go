@@ -42,6 +42,33 @@ func TestParseOldRejects(t *testing.T) {
 	}
 }
 
+func TestParseFileRejectsUnallocatablePCM(t *testing.T) {
+	t.Parallel()
+
+	const frames = 300000
+
+	raw := make([]byte, descriptorSize+headerSize+frames*wordSize)
+	copy(raw, "MAC ")
+	binary.LittleEndian.PutUint16(raw[4:], fileVersion)
+	binary.LittleEndian.PutUint32(raw[8:], descriptorSize)
+	binary.LittleEndian.PutUint32(raw[12:], headerSize)
+	binary.LittleEndian.PutUint32(raw[16:], uint32(frames*wordSize))
+
+	head := raw[descriptorSize:]
+	binary.LittleEndian.PutUint16(head[0:], uint16(CompressionInsane))
+	binary.LittleEndian.PutUint32(head[4:], maxBlocksInsane)
+	binary.LittleEndian.PutUint32(head[8:], maxBlocksInsane)
+	binary.LittleEndian.PutUint32(head[12:], frames)
+	binary.LittleEndian.PutUint16(head[16:], 32)
+	binary.LittleEndian.PutUint16(head[18:], maxChannels)
+	binary.LittleEndian.PutUint32(head[20:], 44100)
+
+	_, err := parseFile(raw)
+	if err == nil {
+		t.Fatal("accepted a header whose PCM cannot be allocated")
+	}
+}
+
 func TestWidenSeek(t *testing.T) {
 	t.Parallel()
 

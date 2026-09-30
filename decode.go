@@ -27,7 +27,13 @@ func Decode(src io.Reader) ([]byte, Stream, error) {
 		return nil, Stream{}, err
 	}
 
-	pcm := make([]byte, 0, file.samples*file.stream.blockAlign())
+	size, err := pcmBytes(file.samples, file.stream.blockAlign())
+	if err != nil {
+		return nil, Stream{}, err
+	}
+
+	pcm := make([]byte, 0, size)
+
 	for idx := range file.frames {
 		frame, skip := file.frame(idx)
 
@@ -143,7 +149,15 @@ func parseFile(raw []byte) (apeFile, error) {
 
 	audioEnd := min(audioStart+headerData+frameBytes, len(raw))
 
-	samples := (frames-1)*frameBlocks + finalBlocks
+	samples, err := sampleCount(frames, frameBlocks, finalBlocks)
+	if err != nil {
+		return apeFile{}, err
+	}
+
+	_, err = pcmBytes(samples, stream.blockAlign())
+	if err != nil {
+		return apeFile{}, err
+	}
 
 	return apeFile{
 		stream:  stream,
@@ -183,7 +197,12 @@ func decodeFrame(
 
 	reader.startCoder()
 
-	out := make([]byte, blocks*stream.blockAlign())
+	size, err := pcmBytes(blocks, stream.blockAlign())
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]byte, size)
 	preds := make([]*decoder, stream.Channels)
 	sums := make([]coderState, stream.Channels)
 

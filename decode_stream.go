@@ -108,7 +108,12 @@ func (d *Decoder) Next() ([]byte, error) {
 }
 
 func (d *Decoder) readAll() ([]byte, error) {
-	pcm := make([]byte, 0, d.samples*d.stream.blockAlign())
+	size, err := pcmBytes(d.samples, d.stream.blockAlign())
+	if err != nil {
+		return nil, err
+	}
+
+	pcm := make([]byte, 0, size)
 
 	for {
 		chunk, err := d.Next()
@@ -184,13 +189,17 @@ func parseNewDecoder(src io.ReadSeeker, size int64, floatMagic bool) (*Decoder, 
 		return nil, err
 	}
 
-	descBytes := int(binary.LittleEndian.Uint32(lead[8:]))
-	headBytes := int(binary.LittleEndian.Uint32(lead[12:]))
-	seekBytesN := int(binary.LittleEndian.Uint32(lead[16:]))
-	headerData := int(binary.LittleEndian.Uint32(lead[20:]))
-	frameBytes := int(binary.LittleEndian.Uint32(lead[24:])) + int(binary.LittleEndian.Uint32(lead[28:]))<<32
+	var (
+		descBytes  = int(binary.LittleEndian.Uint32(lead[8:]))
+		headBytes  = int(binary.LittleEndian.Uint32(lead[12:]))
+		seekBytesN = int(binary.LittleEndian.Uint32(lead[16:]))
+		headerData = int(binary.LittleEndian.Uint32(lead[20:]))
+		frameBytes = int(binary.LittleEndian.Uint32(lead[24:])) +
+			int(binary.LittleEndian.Uint32(lead[28:]))<<32
+	)
 
-	if descBytes < descriptorSize || descBytes > maxHeaderBytes || headBytes < headerSize || headBytes > maxHeaderBytes {
+	if descBytes < descriptorSize || descBytes > maxHeaderBytes ||
+		headBytes < headerSize || headBytes > maxHeaderBytes {
 		return nil, errShortDescriptor
 	}
 
@@ -204,36 +213,51 @@ func parseNewDecoder(src io.ReadSeeker, size int64, floatMagic bool) (*Decoder, 
 	}
 
 	lead = append(lead, rest...)
-	head := lead[descBytes : descBytes+headBytes]
-	level := Compression(binary.LittleEndian.Uint16(head[0:]))
-	flags := binary.LittleEndian.Uint16(head[2:])
-	frameBlocks := int(binary.LittleEndian.Uint32(head[4:]))
-	finalBlocks := int(binary.LittleEndian.Uint32(head[8:]))
-	frames := int(binary.LittleEndian.Uint32(head[12:]))
-	stream := Stream{
-		Bits:       int(binary.LittleEndian.Uint16(head[16:])),
-		Channels:   int(binary.LittleEndian.Uint16(head[18:])),
-		SampleRate: int(binary.LittleEndian.Uint32(head[20:])),
-		Float:      floatMagic || flags&flagFloat != 0,
-	}
+
+	var (
+		head        = lead[descBytes : descBytes+headBytes]
+		level       = Compression(binary.LittleEndian.Uint16(head[0:]))
+		flags       = binary.LittleEndian.Uint16(head[2:])
+		frameBlocks = int(binary.LittleEndian.Uint32(head[4:]))
+		finalBlocks = int(binary.LittleEndian.Uint32(head[8:]))
+		frames      = int(binary.LittleEndian.Uint32(head[12:]))
+		stream      = Stream{
+			Bits:       int(binary.LittleEndian.Uint16(head[16:])),
+			Channels:   int(binary.LittleEndian.Uint16(head[18:])),
+			SampleRate: int(binary.LittleEndian.Uint32(head[20:])),
+			Float:      floatMagic || flags&flagFloat != 0,
+		}
+	)
 
 	err = checkFrames(level, frameBlocks, finalBlocks)
 	if err != nil || !stream.supported() {
 		return nil, ErrUnsupported
 	}
 
-	if frames <= 0 || int64(frames)*wordSize > size || seekBytesN < frames*wordSize || int64(seekBytesN) > size {
-		return nil, errEmptyAudio
-	}
-
-	seekRaw, err := readN(src, seekBytesN)
+	samples, err := sampleCount(frames, frameBlocks, finalBlocks)
 	if err != nil {
 		return nil, err
 	}
 
-	seek := widenSeek(seekRaw, frames)
-	audioStart := int64(descBytes + headBytes + seekBytesN)
-	audioEnd := min(audioStart+int64(headerData)+int64(frameBytes), size)
+	_, err = pcmBytes(samples, stream.blockAlign())
+	if err != nil {
+		return nil, err
+	}
+
+	if int64(frames)*wordSize > size || seekBytesN < frames*wordSize || int64(seekBytesN) > size {
+		return nil, errEmptyAudio
+	}
+
+	seekRaw, err := readN(src, frames*wordSize)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		seek       = widenSeek(seekRaw, frames)
+		audioStart = int64(descBytes + headBytes + seekBytesN)
+		audioEnd   = min(audioStart+int64(headerData)+int64(frameBytes), size)
+	)
 
 	return &Decoder{
 		src:         src,
@@ -241,7 +265,7 @@ func parseNewDecoder(src io.ReadSeeker, size int64, floatMagic bool) (*Decoder, 
 		level:       level,
 		version:     int(binary.LittleEndian.Uint16(lead[4:])),
 		frames:      frames,
-		samples:     (frames-1)*frameBlocks + finalBlocks,
+		samples:     samples,
 		frameBlocks: frameBlocks,
 		finalBlocks: finalBlocks,
 		seek:        seek,
@@ -261,16 +285,19 @@ func parseOldDecoder(src io.ReadSeeker, version int, size int64) (*Decoder, erro
 		return nil, err
 	}
 
-	level := Compression(binary.LittleEndian.Uint16(raw[6:]))
-	flags := binary.LittleEndian.Uint16(raw[8:])
-	channels := int(binary.LittleEndian.Uint16(raw[10:]))
-	rate := int(binary.LittleEndian.Uint32(raw[12:]))
-	storedHeader := int(binary.LittleEndian.Uint32(raw[16:]))
-	terminating := int(binary.LittleEndian.Uint32(raw[20:]))
-	frames := int(binary.LittleEndian.Uint32(raw[24:]))
-	finalBlocks := int(binary.LittleEndian.Uint32(raw[28:]))
+	var (
+		level        = Compression(binary.LittleEndian.Uint16(raw[6:]))
+		flags        = binary.LittleEndian.Uint16(raw[8:])
+		channels     = int(binary.LittleEndian.Uint16(raw[10:]))
+		rate         = int(binary.LittleEndian.Uint32(raw[12:]))
+		storedHeader = int(binary.LittleEndian.Uint32(raw[16:]))
+		terminating  = int(binary.LittleEndian.Uint32(raw[20:]))
+		frames       = int(binary.LittleEndian.Uint32(raw[24:]))
+		finalBlocks  = int(binary.LittleEndian.Uint32(raw[28:]))
+	)
 
-	if frames <= 0 || int64(frames)*wordSize > size || rate <= 0 || channels < 1 || channels > maxChannels {
+	if frames <= 0 || int64(frames)*wordSize > size ||
+		rate <= 0 || channels < 1 || channels > maxChannels {
 		return nil, errEmptyAudio
 	}
 
@@ -299,7 +326,7 @@ func parseOldDecoder(src io.ReadSeeker, version int, size int64) (*Decoder, erro
 		return nil, errShortSeekTable
 	}
 
-	tail, err := readN(src, wav+seekBytes)
+	tail, err := readN(src, wav+frames*wordSize)
 	if err != nil {
 		return nil, err
 	}
@@ -324,6 +351,17 @@ func parseOldDecoder(src io.ReadSeeker, version int, size int64) (*Decoder, erro
 	}
 
 	stream := Stream{Bits: bits, Channels: channels, SampleRate: rate}
+
+	samples, err := sampleCount(frames, frameBlocks, finalBlocks)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = pcmBytes(samples, stream.blockAlign())
+	if err != nil {
+		return nil, err
+	}
+
 	if !stream.supported() {
 		return nil, ErrUnsupported
 	}
@@ -339,7 +377,7 @@ func parseOldDecoder(src io.ReadSeeker, version int, size int64) (*Decoder, erro
 		level:       level,
 		version:     version,
 		frames:      frames,
-		samples:     (frames-1)*frameBlocks + finalBlocks,
+		samples:     samples,
 		frameBlocks: frameBlocks,
 		finalBlocks: finalBlocks,
 		seek:        widenSeek(tail[wav:], frames),

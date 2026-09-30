@@ -2,6 +2,7 @@ package ape
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -136,8 +137,12 @@ func parseLink(raw []byte) (image string, start, finish int, ok bool) {
 func readAudioOrRest(file *os.File) ([]byte, Stream, []byte, bool, error) {
 	var magic [4]byte
 
-	_, err := io.ReadFull(file, magic[:])
+	n, err := io.ReadFull(file, magic[:])
 	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, Stream{}, magic[:n], false, nil
+		}
+
 		return nil, Stream{}, nil, false, fmt.Errorf("ape: reading file: %w", err)
 	}
 
